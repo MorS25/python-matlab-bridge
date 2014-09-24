@@ -22,6 +22,7 @@ import zmq
 import tempfile
 import hashlib
 import shutil
+import re
 try:
     # Python 2
     basestring
@@ -55,6 +56,27 @@ def chain(*iterables):
             for item in iterable:
                 yield item
 
+class ProxyVariable(object):
+    PROXY_RE = re.compile("__VAR=(?P<name>[a-zA-Z_]+)+\|(?P<type>[a-zA-Z0-9[\]() ]+)")
+    def __init__(self, parent, desc):
+        self._parent = parent
+        self._desc = desc
+        self._info = self.PROXY_RE.match(desc).groupdict()
+        self.name = self._info['name']
+
+    def __call__(self):
+        parent = self._parent()
+        return parent.get_variable(self.name)
+
+    def __repr__(self):
+        return "<ProxyVariable %s>" % self._desc
+
+    def __str__(self):
+        return self.name
+
+    @staticmethod
+    def matches(placeholder):
+        return ProxyVariable.PROXY_RE.match(placeholder) is not None
 
 class AttributeDict(dict):
     """A dictionary with attribute-like access
@@ -391,8 +413,8 @@ class Matlab(object):
 
         """
         # send the request
-        req = json.dumps(req, cls=MatlabEncoder)
-        self.socket.send(req)
+        reqs = json.dumps(req, cls=MatlabEncoder)
+        self.socket.send(reqs)
 
         # receive the response
         resp = self.socket.recv_string()
@@ -415,6 +437,18 @@ class Matlab(object):
                     array_result.append(val)
 
             resp.result = array_result
+        elif hasattr(resp, 'result') and isinstance(resp.result, (str, unicode)):
+            if req.get('saveout') and ProxyVariable.matches(resp.result):
+                proxies = []
+                #filter the last empty split match (there is a trialing ;)
+                for p in filter(len, resp.result.split(';')):
+                    proxies.append( ProxyVariable(weakref.ref(self), p) )
+
+                #sort according to the order of saveout
+                saveout = req['saveout'].split(';')
+                proxies.sort(key=lambda x: saveout.index(x.name))
+
+                resp.result = proxies[0] if len(proxies) == 1 else proxies
 
         return resp
 
@@ -552,6 +586,9 @@ class Method(object):
                 key = 'b%d' % i
                 val = os.path.join(self.parent.tempdir_code,'%s.mat' % key)
                 scipy.io.savemat(val, {'v':a}, oned_as='row')
+            elif isinstance(a,ProxyVariable):
+                key = 'p%d' % i
+                val = a.name
             else:
                 key = 'a%d' % i
                 val = a
