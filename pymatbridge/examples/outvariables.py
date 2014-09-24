@@ -16,8 +16,13 @@ if 1:
 
     #perform the same command, and save the 1 output variable on the matlab side
     #with the name 'z'. return a placeholder containing some metadata about it
-    placeholder = mlab.zeros(5,nout=1,saveout=('z',))
-    assert placeholder == '__VAR=z|double([5 5])'
+    _z = mlab.zeros(5,nout=1,saveout=('z',))
+    assert repr(_z) == '<ProxyVariable __VAR=z|double([5 5])>'
+
+    #now return the real variable, not the proxy
+    z = _z()
+    npt.assert_equal(z, np.zeros((5,5)))
+
     #now return the result
     z = mlab.get_variable('z')
     npt.assert_equal(z, np.zeros((5,5)))
@@ -29,12 +34,31 @@ if 1:
     npt.assert_equal(x,npx); npt.assert_equal(y,npy)
 
     #perform the same command, but leave the result in matlab
-    placeholder = mlab.meshgrid(range(1,4),range(10,15),nout=2,saveout=('X','Y'))
-    assert placeholder == '__VAR=Y|double([5 3]);__VAR=X|double([5 3]);'
+    _x,_y = mlab.meshgrid(range(1,4),range(10,15),nout=2,saveout=('X','Y'))
+    assert repr(_x) == '<ProxyVariable __VAR=X|double([5 3])>'
+    assert repr(_y) == '<ProxyVariable __VAR=Y|double([5 3])>'
+
+    #now return the real variable, not the proxy
+    x = _x()
+    npt.assert_equal(x,npx)
 
     #now return the result
     x = mlab.get_variable('X')
     npt.assert_equal(x,npx)
+
+    #also, calling str(proxy) will return the name
+    x = mlab.get_variable(str(_x))
+    npt.assert_equal(x,npx)
+
+    #now pass the proxy to a matlab command and check it decodes it
+    z = mlab.cat(3,_x,_y)
+    npz = np.dstack((npx,npy))
+    npt.assert_equal(z,npz)
+
+    #annother approach, mixing variables on the matlab side
+    mlab.run_code('zb=cat(3,%s,%s);' % (_x, _y))
+    zb = mlab.get_variable('zb')
+    npt.assert_equal(z,zb)
 
 if 1:
     mlab.run_func(os.path.join(_dir,'example_func.m'), 'john', nout=1, saveout=('lol',))
@@ -53,5 +77,6 @@ if 1:
     npt.assert_equal(m,range(1,101))
 
     mlab.run_code('foo=1:100;')
+
 
 mlab.stop()
